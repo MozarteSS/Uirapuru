@@ -1,4 +1,4 @@
-# 🎬 Nheengatú — SRT Subtitle Translator
+# 🎬 UirapuruTranslate — SRT Subtitle Translator
 
 **English → Brazilian Portuguese subtitle translation powered by local LLMs via [Ollama](https://ollama.com).**
 
@@ -29,14 +29,26 @@ Runs entirely offline (no API keys needed) with an optional Google Translate pas
 | Revision model | `gemma3:12b` *(recommended)* |
 | Internet connection | Only for Google Translate (hybrid mode) and model download |
 
+### 💻 Hardware Requirements
+
+| Component | Minimum | Recommended |
+|---|---|---|
+| RAM | 16 GB | 32 GB |
+| VRAM (GPU) | 8 GB | 12 GB+ |
+| GPU | NVIDIA GTX 1080 / AMD RX 6600 | NVIDIA RTX 3080 / RTX 4070+ |
+| Storage | 20 GB free | 40 GB+ free |
+| CPU | 6-core | 8-core+ |
+
+> **Note:** 12B models run on CPU (no GPU), but expect 10–30× slower speeds. With 8 GB VRAM, models run in mixed CPU+GPU mode. For best performance, a GPU with 12 GB+ VRAM is recommended.
+
 ---
 
 ## 🚀 Installation
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YOUR_USERNAME/nheengatu.git
-cd nheengatu
+git clone https://github.com/MozarteSS/UirapuruTranslate.git
+cd UirapuruTranslate
 
 # 2. Create and activate a virtual environment
 python -m venv .venv
@@ -102,7 +114,7 @@ Hybrid mode is generally more accurate and faster because the local model only n
 ## 📁 Project Structure
 
 ```
-nheengatu/
+UirapuruTranslate/
 ├── tradutor_legendas_ollama.ipynb  # Main notebook (user interface)
 ├── translation_process.py          # Core translation and processing logic
 ├── prompts.py                      # Prompt templates and style definitions
