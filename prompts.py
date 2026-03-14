@@ -139,9 +139,11 @@ def prompt_translation(ctx: dict) -> str:
     ctx keys:
         instruction  (str)  → style['instruction']
         numbered     (str)  → numbered subtitles [N] text
+        source_lang  (str)  → source language name (e.g., 'English')
+        target_lang  (str)  → target language name (e.g., 'Brazilian Portuguese')
     """
     return (
-        "You are a professional English to Brazilian Portuguese subtitle translator.\n\n"
+        "You are a professional {source_lang} to {target_lang} subtitle translator.\n\n"
         "{instruction}\n\n"
         "**FORMATTING RULES — FOLLOW EXACTLY:**\n"
         "- Each subtitle is indexed as [N] text. "
@@ -157,7 +159,7 @@ def prompt_translation(ctx: dict) -> str:
         "- Preserve all special symbols (♪) and HTML tags (<i>, <b>) exactly where they belong.\n"
         "- Do NOT include introductions, explanations, "
         "or phrases like \"Here is the translation\".\n\n"
-        "Translate the following subtitles into Brazilian Portuguese:\n"
+        "Translate the following subtitles into {target_lang}:\n"
         "{numbered}"
     ).format(**ctx)
 
@@ -170,23 +172,25 @@ def prompt_revision(ctx: dict) -> str:
         review_focus  (str) → style['review_focus']
         numbered      (str) → numbered original subtitles [N] text
         first_draft   (str) → result from the first translation pass
+        source_lang   (str) → source language name (e.g., 'English')
+        target_lang   (str) → target language name (e.g., 'Brazilian Portuguese')
     """
     return (
-        "You are a senior Brazilian Portuguese subtitle editor.\n"
-        "Review the translation below against the original English "
+        "You are a senior {target_lang} subtitle editor.\n"
+        "Review the translation below against the original {source_lang} "
         "and apply corrections for maximum quality.\n\n"
         "**REVISION CHECKLIST:**\n"
         "1. STYLE: Apply \"{review_focus}\".\n"
         "2. ACCURACY: Fix mistranslations and false cognates.\n"
-        "3. NATURALNESS: Remove literalisms that sound awkward in Portuguese.\n"
+        "3. NATURALNESS: Remove literalisms that sound awkward in {target_lang}.\n"
         "4. CONCISENESS: Rephrase overly long lines without losing meaning.\n"
         "5. TAGS & SYMBOLS: Verify <i>, <b> tags and ♪ symbols are preserved exactly.\n"
         "6. UNITS: Confirm imperial units are converted to metric.\n\n"
         "**MANDATORY:** Keep [N] numbering and \" | \" separator. "
         "LINE COUNT must match original. NO EXPLANATIONS.\n\n"
-        "ORIGINAL (EN):\n"
+        "ORIGINAL ({source_lang}):\n"
         "{numbered}\n\n"
-        "TRANSLATION (PT-BR) TO REVIEW:\n"
+        "TRANSLATION ({target_lang}) TO REVIEW:\n"
         "{first_draft}"
     ).format(**ctx)
 
@@ -197,34 +201,35 @@ def prompt_refinement(ctx: dict) -> str:
 
     ctx keys:
         refinement_instruction  (str) → style['refinement_instruction']
-        numbered_orig           (str) → numbered original EN subtitles
+        numbered_orig           (str) → numbered original subtitles
         numbered_google         (str) → numbered raw Google translation
+        source_lang             (str) → source language name (e.g., 'English')
+        target_lang             (str) → target language name (e.g., 'Brazilian Portuguese')
     """
     return (
-        "You are a professional Brazilian subtitle editor.\n\n"
+        "You are a professional {target_lang} subtitle editor.\n\n"
         "{refinement_instruction}\n\n"
         "You have two inputs:\n"
-        "- ORIGINAL (EN): the source subtitles\n"
-        "- GOOGLE (PT-BR): a raw machine translation to be used as a factual reference\n\n"
-        "Your job: refine the Google translation into polished PT-BR subtitles.\n"
+        "- ORIGINAL ({source_lang}): the source subtitles\n"
+        "- GOOGLE ({target_lang}): a raw machine translation to be used as a factual reference\n\n"
+        "Your job: refine the Google translation into polished {target_lang} subtitles.\n"
         "Use the Google version as your factual base (names, numbers, sentence structure),\n"
         "but fix naturalness, style, literalisms, and apply the required tone.\n\n"
         "**FORMATTING RULES — MANDATORY:**\n"
         "- Return ONLY the refined subtitles in format: [N] refined text\n"
         "- Multi-line subtitles use \" | \" as separator\n"
-        "- LINE COUNT per subtitle must match the ORIGINAL (EN) exactly\n"
+        "- LINE COUNT per subtitle must match the ORIGINAL ({source_lang}) exactly\n"
         "- Total number of [N] items must match the input exactly\n"
         "- NO introductions, explanations, or preamble\n\n"
         "**LINGUISTIC RULES:**\n"
         "- Conciseness is mandatory — rephrase if needed to keep lines short\n"
         "- Preserve symbols (♪) and HTML tags (<i>, <b>) exactly\n"
-        "- Fix false cognates "
-        "(e.g., 'actually' ≠ 'atualmente', 'eventually' ≠ 'eventualmente')\n\n"
-        "ORIGINAL (EN):\n"
+        "- Fix false cognates and unnatural literal translations\n\n"
+        "ORIGINAL ({source_lang}):\n"
         "{numbered_orig}\n\n"
-        "GOOGLE TRANSLATE (PT-BR — raw reference):\n"
+        "GOOGLE TRANSLATE ({target_lang} — raw reference):\n"
         "{numbered_google}\n\n"
-        "REFINED SUBTITLES (PT-BR):"
+        "REFINED SUBTITLES ({target_lang}):"
     ).format(**ctx)
 
 
@@ -238,9 +243,11 @@ def prompt_individual(ctx: dict) -> str:
         line_limit_info     (str)  → character limit instruction per line (can be '')
         google_ref          (str)  → Google Translate reference (can be '')
         source_text         (str)  → original subtitle with \n replaced by ' | '
+        source_lang         (str)  → source language name (e.g., 'English')
+        target_lang         (str)  → target language name (e.g., 'Brazilian Portuguese')
     """
     return (
-        "You are a professional English to Brazilian Portuguese subtitle translator.\n"
+        "You are a professional {source_lang} to {target_lang} subtitle translator.\n"
         "{instruction}\n\n"
         "STRICT RULES:\n"
         "- Return ONLY the translation. No explanations, no quotes, no [N] prefix.\n"
@@ -252,7 +259,7 @@ def prompt_individual(ctx: dict) -> str:
         "{google_ref}\n"
         "Subtitle to translate:\n"
         "{source_text}\n\n"
-        "Translation (pt-BR):"
+        "Translation ({target_lang}):"
     ).format(**ctx)
 
 
@@ -261,22 +268,24 @@ def prompt_semantic_revision(ctx: dict) -> str:
     Semantic batch revision prompt (Cell 4 — final quality check).
 
     ctx keys:
-        pairs_text  (str) → block of lines "[N] EN: ...\n[N] PT: ..."
+        pairs_text   (str) → block of lines "[N] SRC: ...\n[N] TGT: ..."
+        source_lang  (str) → source language name (e.g., 'English')
+        target_lang  (str) → target language name (e.g., 'Brazilian Portuguese')
     """
     return (
-        "You are a senior subtitle quality controller for Brazilian Portuguese.\n"
-        "Audit each EN/PT-BR subtitle pair for accuracy and quality.\n\n"
+        "You are a senior subtitle quality controller for {target_lang}.\n"
+        "Audit each {source_lang}/{target_lang} subtitle pair for accuracy and quality.\n\n"
         "CHECKLIST — flag as 'ERRO' if any apply:\n"
         "1. SCIENTIFIC NAMES: Latin names translated, or <i> tags missing on binomials.\n"
         "2. MEASUREMENTS: Imperial units NOT converted to metric.\n"
-        "3. LINE COUNT: PT-BR has different number of ' | ' separators than EN.\n"
+        "3. LINE COUNT: {target_lang} has different number of ' | ' separators than {source_lang}.\n"
         "4. MEANING: Scientific/narrative meaning is lost, distorted, or tone is wrong.\n"
-        "5. FALSE COGNATES: e.g., 'actually' ≠ 'atualmente', 'eventually' ≠ 'eventualmente'.\n"
+        "5. FALSE COGNATES: unnatural literal translations that don't sound natural in {target_lang}.\n"
         "6. TAGS/SYMBOLS: HTML tags or ♪ symbols were lost or corrupted.\n\n"
         "RESPONSE FORMAT (one line per pair):\n"
         "[N] OK\n"
         "or\n"
-        "[N] ERRO: <short description> | SUGESTÃO: <corrected PT-BR text>\n\n"
+        "[N] ERRO: <short description> | SUGESTÃO: <corrected {target_lang} text>\n\n"
         "Do NOT flag minor stylistic preferences. No introduction or summary.\n\n"
         "Subtitle pairs:\n"
         "{pairs_text}"

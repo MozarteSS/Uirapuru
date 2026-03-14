@@ -137,22 +137,52 @@ def strip_tags(text: str) -> str:
 # GOOGLE TRANSLATE
 # ══════════════════════════════════════════════════════════════════
 
-_gt = GoogleTranslator(source='en', target='pt')
+# ── Language name mapping for prompt display ─────────────────────
+_LANG_NAMES: dict[str, str] = {
+    'en': 'English', 'pt': 'Brazilian Portuguese', 'es': 'Spanish',
+    'fr': 'French', 'de': 'German', 'it': 'Italian', 'ja': 'Japanese',
+    'ko': 'Korean', 'zh': 'Chinese', 'ru': 'Russian', 'ar': 'Arabic',
+    'nl': 'Dutch', 'pl': 'Polish', 'tr': 'Turkish', 'sv': 'Swedish',
+    'pt-br': 'Brazilian Portuguese', 'zh-cn': 'Chinese (Simplified)',
+    'zh-tw': 'Chinese (Traditional)',
+}
+
+
+def _lang_name(code: str) -> str:
+    """Returns a human-readable language name for use in prompts."""
+    return _LANG_NAMES.get(code.lower(), code.upper())
+
+
+_gt_cache: dict[tuple, GoogleTranslator] = {}
 _GT_CHAR_LIMIT = 4500  # safety margin below the 5000-char limit
 
 
-def google_translate_batch(texts: list[str]) -> list[str]:
+def _get_translator(source_lang: str, target_lang: str) -> GoogleTranslator:
+    """Returns a cached GoogleTranslator for the given language pair."""
+    key = (source_lang, target_lang)
+    if key not in _gt_cache:
+        _gt_cache[key] = GoogleTranslator(source=source_lang, target=target_lang)
+    return _gt_cache[key]
+
+
+def google_translate_batch(
+    texts: list[str],
+    source_lang: str = 'en',
+    target_lang: str = 'pt',
+) -> list[str]:
     """
     Translates a list of texts using Google Translate.
     Uses separators to preserve 1-to-1 correspondence with the fewest
     possible calls. Falls back to individual calls if the batch exceeds the limit.
     """
+    translator = _get_translator(source_lang, target_lang)
+
     def _translate_chunk(chunk_texts):
         parts   = [t.replace('\n', ' | ') for t in chunk_texts]
         payload = '|||SEP|||'.join(parts)
         if len(payload) > _GT_CHAR_LIMIT:
             return None
-        translated = _gt.translate(payload)
+        translated = translator.translate(payload)
         if not translated:
             return None
         translated_parts = re.split(r'\|{3}SEP\|{3}', translated)
@@ -168,7 +198,7 @@ def google_translate_batch(texts: list[str]) -> list[str]:
     translations = []
     for t in texts:
         try:
-            trad = _gt.translate(t.replace('\n', ' | ')) or t
+            trad = translator.translate(t.replace('\n', ' | ')) or t
             translations.append(trad)
         except Exception:
             translations.append(t)
@@ -185,17 +215,23 @@ def translate_batch_model(
     translation_model: str,
     revision_model: str,
     batch_size: int,
+    source_lang: str = 'en',
+    target_lang: str = 'pt',
 ) -> tuple[str, str]:
     """Translation + auto-revision entirely by the local model."""
     numbered = '\n'.join(
         f'[{i+1}] {t.replace(chr(10), " | ")}' for i, t in enumerate(texts)
     )
+    src_name = _lang_name(source_lang)
+    tgt_name = _lang_name(target_lang)
 
     resp_trans = ollama.chat(
         model=translation_model,
         messages=[{'role': 'user', 'content': prompt_translation({
             'instruction': style['instruction'],
             'numbered'   : numbered,
+            'source_lang': src_name,
+            'target_lang': tgt_name,
         })}],
         options={'temperature': 0.2, 'num_ctx': 8192,
                  'num_predict': 256 * batch_size, 'repeat_penalty': 1.1},
@@ -208,6 +244,8 @@ def translate_batch_model(
             'review_focus': style['review_focus'],
             'numbered'    : numbered,
             'first_draft' : first_draft,
+            'source_lang' : src_name,
+            'target_lang' : tgt_name,
         })}],
         options={'temperature': 0.1, 'num_ctx': 8192,
                  'num_predict': 256 * batch_size, 'repeat_penalty': 1.1},
@@ -226,6 +264,8 @@ def translate_batch_hybrid(
     translation_model: str,
     revision_model: str,
     batch_size: int,
+    source_lang: str = 'en',
+    target_lang: str = 'pt',
 ) -> tuple[str, str]:
     """
     Hybrid mode:
@@ -233,11 +273,13 @@ def translate_batch_hybrid(
       2. Local model refines to the chosen style and corrects literalisms
     """
     try:
-        base_google = google_translate_batch(texts)
+        base_google = google_translate_batch(texts, source_lang, target_lang)
     except Exception as e:
         print(f'\n  ⚠️  Google Translate failed ({e}) — using pure model for this batch')
-        return translate_batch_model(texts, style, translation_model, revision_model, batch_size)
+        return translate_batch_model(texts, style, translation_model, revision_model, batch_size, source_lang, target_lang)
 
+    src_name = _lang_name(source_lang)
+    tgt_name = _lang_name(target_lang)
     numbered_orig   = '\n'.join(f'[{i+1}] {t.replace(chr(10), " | ")}' for i, t in enumerate(texts))
     numbered_google = '\n'.join(f'[{i+1}] {g}' for i, g in enumerate(base_google))
 
@@ -247,6 +289,8 @@ def translate_batch_hybrid(
             'refinement_instruction': style['refinement_instruction'],
             'numbered_orig'         : numbered_orig,
             'numbered_google'       : numbered_google,
+            'source_lang'           : src_name,
+            'target_lang'           : tgt_name,
         })}],
         options={'temperature': 0.15, 'num_ctx': 8192,
                  'num_predict': 256 * batch_size, 'repeat_penalty': 1.1},
@@ -266,6 +310,8 @@ def translate_batch(
     revision_model: str,
     batch_size: int,
     hybrid_mode: bool,
+    source_lang: str = 'en',
+    target_lang: str = 'pt',
 ) -> tuple[dict[int, str], list[int]]:
     """
     Calls the appropriate mode and unpacks the numbered indices from the result.
@@ -275,9 +321,9 @@ def translate_batch(
         missing       → list of 1-based indices absent from the response
     """
     if hybrid_mode:
-        result_raw, _ = translate_batch_hybrid(texts, style, translation_model, revision_model, batch_size)
+        result_raw, _ = translate_batch_hybrid(texts, style, translation_model, revision_model, batch_size, source_lang, target_lang)
     else:
-        result_raw, _ = translate_batch_model(texts, style, translation_model, revision_model, batch_size)
+        result_raw, _ = translate_batch_model(texts, style, translation_model, revision_model, batch_size, source_lang, target_lang)
 
     translations: dict[int, str] = {}
     for line in result_raw.splitlines():
@@ -299,6 +345,8 @@ def translate_batch_with_retry(
     chars_threshold: int,
     expansion_factor: float,
     max_retries: int = 3,
+    source_lang: str = 'en',
+    target_lang: str = 'pt',
 ) -> list[str]:
     """
     Runs translate_batch with smart retries:
@@ -319,6 +367,7 @@ def translate_batch_with_retry(
             translations, local_missing = translate_batch(
                 pending_texts, style, translation_model,
                 revision_model, batch_size, hybrid_mode,
+                source_lang, target_lang,
             )
             # Apply received translations (local index → global index)
             for local_idx, trad in translations.items():
@@ -349,6 +398,7 @@ def translate_batch_with_retry(
             new = reprocess_individual(
                 global_idx - 1, orig, style, translation_model,
                 hybrid_mode, chars_threshold, expansion_factor,
+                source_lang, target_lang,
             )
             result[global_idx - 1] = new
             status = '✅' if new.strip() != orig.strip() else '⚠️  (original kept)'
@@ -576,6 +626,7 @@ def detect_problems(
     translated: list[str],
     chars_threshold: int,
     expansion_factor: float,
+    source_lang: str = 'en',
 ) -> list[tuple]:
     """Detects structural and size issues in translations."""
     problems = []
@@ -606,12 +657,14 @@ def detect_problems(
             problems.append((i, 'not translated'))
             continue
 
-        en_words   = set(re.findall(r'\b[a-zA-Z]+\b', trad))
-        orig_words = set(re.findall(r'\b[a-zA-Z]+\b', orig))
-        en_in_trad = en_words & stopwords_en
-        if len(orig_words) > 3 and len(en_in_trad) >= 3 and len(en_words) > len(orig_words) * 0.5:
-            problems.append((i, 'possible English'))
-            continue
+        # Heuristic: detect when source text was not translated (only applicable for EN source)
+        if source_lang.lower() in ('en', 'english'):
+            en_words   = set(re.findall(r'\b[a-zA-Z]+\b', trad))
+            orig_words = set(re.findall(r'\b[a-zA-Z]+\b', orig))
+            en_in_trad = en_words & stopwords_en
+            if len(orig_words) > 3 and len(en_in_trad) >= 3 and len(en_words) > len(orig_words) * 0.5:
+                problems.append((i, 'possible English'))
+                continue
 
         if ' | ' in trad:
             problems.append((i, 'visible | separator'))
@@ -639,6 +692,8 @@ def reprocess_individual(
     hybrid_mode: bool,
     chars_threshold: int,
     expansion_factor: float,
+    source_lang: str = 'en',
+    target_lang: str = 'pt',
 ) -> str:
     """Retranslates a single subtitle with precise line and character limit control."""
     if is_empty_block(original_text):
@@ -661,7 +716,7 @@ def reprocess_individual(
     google_ref = ''
     if hybrid_mode:
         try:
-            google_trad = _gt.translate(source_text)
+            google_trad = _get_translator(source_lang, target_lang).translate(source_text)
             if google_trad:
                 google_ref = f'\nGoogle Translate reference: {google_trad}\n'
         except Exception:
@@ -673,6 +728,8 @@ def reprocess_individual(
         'line_limit_info'  : line_limit_info,
         'google_ref'       : google_ref,
         'source_text'      : source_text,
+        'source_lang'      : _lang_name(source_lang),
+        'target_lang'      : _lang_name(target_lang),
     })
 
     best_result = None  # best translated result even if line count is off
@@ -706,6 +763,8 @@ def validate_and_correct(
     chars_threshold: int,
     expansion_factor: float,
     global_offset: int = 0,
+    source_lang: str = 'en',
+    target_lang: str = 'pt',
 ) -> tuple[list[str], int]:
     """Detects problems and individually reprocesses problematic subtitles."""
 
@@ -721,6 +780,7 @@ def validate_and_correct(
         new_text = reprocess_individual(
             local_idx, orig, style, translation_model,
             hybrid_mode, chars_threshold, expansion_factor,
+            source_lang, target_lang,
         )
         if new_text.strip() != orig.strip():
             pre_corrected[local_idx] = new_text
@@ -730,7 +790,7 @@ def validate_and_correct(
             print(f'       ⚠️  No change — kept')
 
     # ── Normal structural validation ──────────────────────────────
-    problems = detect_problems(originals, pre_corrected, chars_threshold, expansion_factor)
+    problems = detect_problems(originals, pre_corrected, chars_threshold, expansion_factor, source_lang)
     if not problems and n_pre == 0:
         return pre_corrected, 0
 
@@ -749,6 +809,7 @@ def validate_and_correct(
         new_text = reprocess_individual(
             local_idx, orig, style, translation_model,
             hybrid_mode, chars_threshold, expansion_factor,
+            source_lang, target_lang,
         )
 
         if reason.startswith('long line'):
@@ -882,20 +943,29 @@ def line_too_long(
     return False, ''
 
 
-def review_semantic_batch(pairs: list[tuple], revision_model: str) -> dict:
+def review_semantic_batch(
+    pairs: list[tuple],
+    revision_model: str,
+    source_lang: str = 'en',
+    target_lang: str = 'pt',
+) -> dict:
     """
-    Sends a batch of EN/PT pairs to the model for semantic error checking.
+    Sends a batch of source/target pairs to the model for semantic error checking.
     Returns dict {position: {status, problem, suggestion}}.
     """
+    src_name = _lang_name(source_lang)
+    tgt_name = _lang_name(target_lang)
     lines = []
     for i, (idx, orig, trad) in enumerate(pairs):
-        lines.append(f'[{i+1}] EN: {orig.replace(chr(10), " | ")}')
-        lines.append(f'[{i+1}] PT: {trad.replace(chr(10), " | ")}')
+        lines.append(f'[{i+1}] {src_name}: {orig.replace(chr(10), " | ")}')
+        lines.append(f'[{i+1}] {tgt_name}: {trad.replace(chr(10), " | ")}')
 
     resp = ollama.chat(
         model=revision_model,
         messages=[{'role': 'user', 'content': prompt_semantic_revision({
-            'pairs_text': '\n'.join(lines),
+            'pairs_text' : '\n'.join(lines),
+            'source_lang': src_name,
+            'target_lang': tgt_name,
         })}],
         options={'temperature': 0.0, 'num_ctx': 8192, 'num_predict': 2048},
     )
@@ -932,6 +1002,8 @@ def translate_file(
     expansion_factor: float,
     use_google_as_base: bool,
     google_available: bool,
+    source_language: str = 'en',
+    target_language: str = 'pt',
 ) -> str:
     """
     Runs the full translation pipeline for an SRT file.
@@ -968,7 +1040,7 @@ def translate_file(
 
     total_batches   = (total + batch_size - 1) // batch_size
     base            = os.path.splitext(input_file)[0]
-    output_filename = f'{base}_{style["name"]}_pt-BR.srt'
+    output_filename = f'{base}_{style["name"]}_{target_language}.srt'
     checkpoint_file = f'{base}_checkpoint.json'
 
     all_texts = [b['text'] for b in blocks]
@@ -987,7 +1059,8 @@ def translate_file(
 
     mode_str = '🔄 Hybrid' if hybrid_mode else '🤖 Pure model'
     print(f'\n📊 {total} subtitles | 📦 {total_batches} batches of {batch_size}')
-    print(f'🌐 Model: {translation_model} | Style: {style["name"]} | Mode: {mode_str}\n')
+    print(f'🌐 Model: {translation_model} | Style: {style["name"]} | Mode: {mode_str}')
+    print(f'💬 {_lang_name(source_language)} → {_lang_name(target_language)}\n')
 
     errors = total_long = total_corrections = 0
     start_time   = time.time()
@@ -1005,6 +1078,7 @@ def translate_file(
             translate_batch_with_retry(
                 real_texts, style, translation_model, revision_model,
                 batch_size, hybrid_mode, chars_threshold, expansion_factor,
+                source_lang=source_language, target_lang=target_language,
             )
             if real_texts else list(batch)
         )
@@ -1017,11 +1091,12 @@ def translate_file(
         if result == batch:
             errors += len(batch)
         else:
-            problems_before  = detect_problems(batch, result, chars_threshold, expansion_factor)
+            problems_before  = detect_problems(batch, result, chars_threshold, expansion_factor, source_language)
             total_long      += sum(1 for _, m in problems_before if 'long' in m)
             result, n_corr   = validate_and_correct(
                 batch, result, style, translation_model,
-                hybrid_mode, chars_threshold, expansion_factor, global_offset=i,
+                hybrid_mode, chars_threshold, expansion_factor,
+                global_offset=i, source_lang=source_language, target_lang=target_language,
             )
             total_corrections += n_corr
 
@@ -1081,6 +1156,8 @@ def review_and_correct_file(
     save_report: bool = True,
     use_transquest: bool = False,
     qe_threshold: float = 50.0,
+    source_language: str = 'en',
+    target_language: str = 'pt',
 ) -> str:
     """
     Runs the final review: programmatic + semantic verification,
@@ -1145,7 +1222,7 @@ def review_and_correct_file(
         batch_indices = llm_indices[start:start + review_batch_size]
         pairs = [(idx, orig_blocks[idx], trad_blocks[idx]) for idx in batch_indices]
         try:
-            results = review_semantic_batch(pairs, revision_model)
+            results = review_semantic_batch(pairs, revision_model, source_language, target_language)
         except Exception as e:
             print(f'\n  ⚠️  Batch {b+1} failed: {e}'); continue
         for i, (idx, orig, trad) in enumerate(pairs):
@@ -1199,6 +1276,7 @@ def review_and_correct_file(
         new_text = reprocess_individual(
             idx, orig, style, translation_model,
             hybrid_mode, chars_threshold, expansion_factor,
+            source_language, target_language,
         )
 
         if reason.startswith('long line'):
