@@ -46,3 +46,6 @@ Thumbs.db
 *_corrected.srt
 *_checkpoint.json
 *_review_report.txt
+
+# Test media
+movie_test/

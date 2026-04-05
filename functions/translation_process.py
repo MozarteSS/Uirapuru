@@ -14,7 +14,7 @@ from collections import deque
 import ollama
 from deep_translator import GoogleTranslator
 
-from prompts import (
+from functions.prompts import (
     STYLES,
     prompt_translation,
     prompt_revision,
